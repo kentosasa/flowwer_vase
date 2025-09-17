@@ -3,14 +3,14 @@ import "./style.css";
 import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
-import { hollowCylinder } from "./model/manifold";
+import { hollowCylinder, type SidePattern } from "./model/manifold";
 import { mesh2geometry } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
 
 import { Dyn } from "twrl";
 
-import { rangeControl, checkbox } from "./controls";
+import { rangeControl, checkbox, selectControl } from "./controls";
 
 /// CONSTANTS
 
@@ -33,6 +33,7 @@ const MIN_WALL_THICKNESS = 1;
 const MAX_WALL_THICKNESS = 20;
 
 const START_CLOSED_BOTTOM = true;
+const START_SIDE_PATTERN: SidePattern = "normal";
 
 /// STATE
 
@@ -46,6 +47,7 @@ const modelDimensions = {
   outerRadius: new Dyn(START_OUTER_RADIUS),
   wallThickness: new Dyn(START_WALL_THICKNESS),
   closedBottom: new Dyn(START_CLOSED_BOTTOM),
+  sidePattern: new Dyn<SidePattern>(START_SIDE_PATTERN),
 };
 
 
@@ -84,8 +86,9 @@ async function reloadModel(
   outerRadius: number,
   wallThickness: number,
   closedBottom: boolean,
+  sidePattern: SidePattern,
 ) {
-  const model = await hollowCylinder(height, outerRadius, wallThickness, closedBottom);
+  const model = await hollowCylinder(height, outerRadius, wallThickness, closedBottom, sidePattern);
   const geometry = mesh2geometry(model);
   geometry.computeVertexNormals(); // Make sure the geometry has normals
   mesh.geometry = geometry;
@@ -98,10 +101,11 @@ Dyn.sequence([
   modelDimensions.outerRadius,
   modelDimensions.wallThickness,
   modelDimensions.closedBottom,
-] as const).addListener(([h, r, w, closed]) => {
+  modelDimensions.sidePattern,
+] as const).addListener(([h, r, w, closed, pattern]) => {
   const bottomType = closed ? "closed" : "open";
-  const filename = `cylinder-${(r * 2).toFixed(0)}x${h.toFixed(0)}-wall${w.toFixed(0)}-${bottomType}.3mf`;
-  tmfLoader.load(hollowCylinder(h, r, w, closed), filename);
+  const filename = `cylinder-${(r * 2).toFixed(0)}x${h.toFixed(0)}-wall${w.toFixed(0)}-${bottomType}-${pattern}.3mf`;
+  tmfLoader.load(hollowCylinder(h, r, w, closed, pattern), filename);
 });
 
 /// RENDER
@@ -214,6 +218,18 @@ const closedBottomControl = checkbox("closedBottom", {
 });
 controls.append(closedBottomControl);
 
+const sidePatternControl = selectControl("sidePattern", {
+  label: "Side Pattern",
+  options: [
+    { value: "normal", label: "Normal" },
+    { value: "strip", label: "Strip" },
+    { value: "voronoi", label: "Voronoi" },
+    { value: "lowpoly", label: "Low Poly" },
+  ],
+  defaultValue: START_SIDE_PATTERN,
+});
+controls.append(sidePatternControl);
+
 // The dimension inputs
 const inputs = {
   height: heightControl.input,
@@ -223,6 +239,7 @@ const inputs = {
   wallThickness: wallThicknessControl.input,
   wallThicknessRange: wallThicknessControl.range,
   closedBottom: document.querySelector("#closedBottom")! as HTMLInputElement,
+  sidePattern: document.querySelector("#sidePattern")! as HTMLSelectElement,
 } as const;
 
 // Add change events to all dimension inputs
@@ -281,6 +298,14 @@ const inputs = {
 // closed bottom
 inputs.closedBottom.addEventListener("change", () => {
   modelDimensions.closedBottom.send(inputs.closedBottom.checked);
+});
+
+// side pattern
+inputs.sidePattern.addEventListener("change", () => {
+  const value = inputs.sidePattern.value;
+  if (value === "normal" || value === "strip" || value === "voronoi" || value === "lowpoly") {
+    modelDimensions.sidePattern.send(value);
+  }
 });
 
 // Add select-all on input click for number inputs
@@ -484,6 +509,7 @@ function loop(nowMillis: DOMHighResTimeStamp) {
       animations["outerRadius"].current,
       animations["wallThickness"].current,
       modelDimensions.closedBottom.latest,
+      modelDimensions.sidePattern.latest,
     ).then(() => {
       modelLoadStarted = undefined;
       centerCameraNeeded = true;
