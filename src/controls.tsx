@@ -59,3 +59,20 @@ export const stepper = (
     <button id={`${id}-plus`} innerHTML={plusIcon}></button>
   </div>
 );
+
+export const checkbox = (
+  id: string,
+  opts: { label: string; checked?: boolean },
+) => {
+  const input = <input type="checkbox" id={id} name={id} /> as HTMLInputElement;
+  if (opts.checked) {
+    input.checked = true;
+  }
+
+  return (
+    <div className="checkbox-wrapper">
+      {input}
+      <label htmlFor={id}>{opts.label}</label>
+    </div>
+  );
+};
