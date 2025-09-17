@@ -10,18 +10,13 @@ import { Animate, immediate } from "./animate";
 
 import { Dyn } from "twrl";
 
-import { rangeControl } from "./controls";
+import { rangeControl, checkbox } from "./controls";
 
 /// CONSTANTS
 
 // Align axes with 3D printer
 THREE.Object3D.DEFAULT_UP = new THREE.Vector3(0, 0, 1);
 
-const DIMENSIONS = [
-  "height",
-  "outerRadius",
-  "wallThickness",
-] as const;
 
 // constants for cylinder dimensions
 
@@ -37,6 +32,8 @@ const START_WALL_THICKNESS = 3;
 const MIN_WALL_THICKNESS = 1;
 const MAX_WALL_THICKNESS = 20;
 
+const START_CLOSED_BOTTOM = true;
+
 /// STATE
 
 // Dimensions of the cylinder model.
@@ -48,6 +45,7 @@ const modelDimensions = {
   height: new Dyn(START_HEIGHT),
   outerRadius: new Dyn(START_OUTER_RADIUS),
   wallThickness: new Dyn(START_WALL_THICKNESS),
+  closedBottom: new Dyn(START_CLOSED_BOTTOM),
 };
 
 
@@ -85,8 +83,9 @@ async function reloadModel(
   height: number,
   outerRadius: number,
   wallThickness: number,
+  closedBottom: boolean,
 ) {
-  const model = await hollowCylinder(height, outerRadius, wallThickness);
+  const model = await hollowCylinder(height, outerRadius, wallThickness, closedBottom);
   const geometry = mesh2geometry(model);
   geometry.computeVertexNormals(); // Make sure the geometry has normals
   mesh.geometry = geometry;
@@ -98,9 +97,11 @@ Dyn.sequence([
   modelDimensions.height,
   modelDimensions.outerRadius,
   modelDimensions.wallThickness,
-] as const).addListener(([h, r, w]) => {
-  const filename = `cylinder-${(r * 2).toFixed(0)}x${h.toFixed(0)}-wall${w.toFixed(0)}.3mf`;
-  tmfLoader.load(hollowCylinder(h, r, w), filename);
+  modelDimensions.closedBottom,
+] as const).addListener(([h, r, w, closed]) => {
+  const bottomType = closed ? "closed" : "open";
+  const filename = `cylinder-${(r * 2).toFixed(0)}x${h.toFixed(0)}-wall${w.toFixed(0)}-${bottomType}.3mf`;
+  tmfLoader.load(hollowCylinder(h, r, w, closed), filename);
 });
 
 /// RENDER
@@ -159,14 +160,15 @@ partPositioning.addListener((val) => {
 
 /// ANIMATIONS
 
-// The animated dimensions
+// The animated dimensions (booleans don't need animation)
 const animations = {
   height: new Animate(START_HEIGHT),
   outerRadius: new Animate(START_OUTER_RADIUS),
   wallThickness: new Animate(START_WALL_THICKNESS),
 };
 
-DIMENSIONS.forEach((dim) =>
+// Only animate numeric dimensions
+(["height", "outerRadius", "wallThickness"] as const).forEach((dim) =>
   modelDimensions[dim].addListener((val) => {
     animations[dim].startAnimationTo(val);
   }),
@@ -206,6 +208,12 @@ const wallThicknessControl = rangeControl("wallThickness", {
 });
 controls.append(wallThicknessControl.wrapper);
 
+const closedBottomControl = checkbox("closedBottom", {
+  label: "Closed Bottom",
+  checked: START_CLOSED_BOTTOM,
+});
+controls.append(closedBottomControl);
+
 // The dimension inputs
 const inputs = {
   height: heightControl.input,
@@ -214,6 +222,7 @@ const inputs = {
   outerRadiusRange: outerRadiusControl.range,
   wallThickness: wallThicknessControl.input,
   wallThicknessRange: wallThicknessControl.range,
+  closedBottom: document.querySelector("#closedBottom")! as HTMLInputElement,
 } as const;
 
 // Add change events to all dimension inputs
@@ -269,7 +278,12 @@ const inputs = {
   });
 });
 
-// Add select-all on input click
+// closed bottom
+inputs.closedBottom.addEventListener("change", () => {
+  modelDimensions.closedBottom.send(inputs.closedBottom.checked);
+});
+
+// Add select-all on input click for number inputs
 (["height", "outerRadius", "wallThickness"] as const).forEach((dim) => {
   const input = inputs[dim];
   input.addEventListener("focus", () => {
@@ -445,8 +459,8 @@ function loop(nowMillis: DOMHighResTimeStamp) {
     mesh.rotation.z = rotation.current * Math.PI + MESH_ROTATION_DELTA;
   }
 
-  // Handle dimensions animation
-  const dimensionsUpdated = DIMENSIONS.reduce(
+  // Handle dimensions animation (only for numeric dimensions)
+  const dimensionsUpdated = (["height", "outerRadius", "wallThickness"] as const).reduce(
     (acc, dim) => animations[dim].update() || acc,
     false,
   );
@@ -469,6 +483,7 @@ function loop(nowMillis: DOMHighResTimeStamp) {
       animations["height"].current,
       animations["outerRadius"].current,
       animations["wallThickness"].current,
+      modelDimensions.closedBottom.latest,
     ).then(() => {
       modelLoadStarted = undefined;
       centerCameraNeeded = true;

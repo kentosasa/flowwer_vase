@@ -42,6 +42,7 @@ export async function hollowCylinder(
   height: number,
   outerRadius: number,
   wallThickness: number,
+  closedBottom: boolean = true,
 ): Promise<Manifold> {
   const innerRadius = Math.max(0, outerRadius - wallThickness);
 
@@ -49,7 +50,14 @@ export async function hollowCylinder(
   const outer = (await circle(outerRadius)).extrude(height);
 
   // Create inner cylinder (hollow part)
-  const inner = (await circle(innerRadius)).extrude(height);
+  // If bottom is closed, start the inner cylinder from wallThickness height
+  // If bottom is open, start from 0 (bottom)
+  const innerHeight = closedBottom ? height - wallThickness : height;
+  const innerStartZ = closedBottom ? wallThickness : 0;
+
+  const inner = (await circle(innerRadius))
+    .extrude(innerHeight)
+    .translate([0, 0, innerStartZ]);
 
   // Subtract inner from outer to create hollow cylinder
   return outer.subtract(inner);
