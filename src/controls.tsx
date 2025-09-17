@@ -76,3 +76,30 @@ export const checkbox = (
     </div>
   );
 };
+
+export const selectControl = (
+  id: string,
+  opts: {
+    label: string;
+    options: { value: string; label: string }[];
+    defaultValue?: string;
+  },
+) => {
+  const select = <select id={id} name={id} /> as HTMLSelectElement;
+
+  opts.options.forEach(option => {
+    const optionElement = <option value={option.value}>{option.label}</option> as HTMLOptionElement;
+    select.appendChild(optionElement);
+  });
+
+  if (opts.defaultValue) {
+    select.value = opts.defaultValue;
+  }
+
+  return (
+    <div className="select-wrapper">
+      <label htmlFor={id}>{opts.label}</label>
+      {select}
+    </div>
+  );
+};
