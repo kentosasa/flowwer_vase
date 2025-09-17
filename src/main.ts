@@ -3,14 +3,14 @@ import "./style.css";
 import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
-import { CLIP_HEIGHT, box } from "./model/manifold";
+import { hollowCylinder } from "./model/manifold";
 import { mesh2geometry } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
 
 import { Dyn } from "twrl";
 
-import { rangeControl, stepper } from "./controls";
+import { rangeControl } from "./controls";
 
 /// CONSTANTS
 
@@ -19,60 +19,38 @@ THREE.Object3D.DEFAULT_UP = new THREE.Vector3(0, 0, 1);
 
 const DIMENSIONS = [
   "height",
-  "width",
-  "depth",
-  "radius",
-  "wall",
-  "bottom",
+  "outerRadius",
+  "wallThickness",
 ] as const;
 
-// constants, all in outer dimensions (when applicable)
+// constants for cylinder dimensions
 
-// actual constants
-const START_RADIUS = 6;
-const START_WALL = 2;
-const START_BOTTOM = 3;
+const START_HEIGHT = 50;
+const MIN_HEIGHT = 10;
+const MAX_HEIGHT = 200;
 
-const START_HEIGHT = 52; /* calculated manually from START_LEVELS */
-const START_LEVELS = 2;
-const MIN_LEVELS = 1;
-const MAX_LEVELS = 5;
+const START_OUTER_RADIUS = 25;
+const MIN_OUTER_RADIUS = 5;
+const MAX_OUTER_RADIUS = 100;
 
-const START_WIDTH = 80;
-const MIN_WIDTH = 10 + 2 * START_RADIUS;
-const MAX_WIDTH = 204; /* somewhat arbitrary */
-
-const START_DEPTH = 60;
-const MIN_DEPTH = 20;
-const MAX_DEPTH = 204; /* somewhat arbitrary */
+const START_WALL_THICKNESS = 3;
+const MIN_WALL_THICKNESS = 1;
+const MAX_WALL_THICKNESS = 20;
 
 /// STATE
 
-// Dimensions of the model (outer, where applicable).
+// Dimensions of the cylinder model.
 // These are the dimensions of the 3MF file, as well as
 // the _target_ dimensions for the animations, though may
 // be (ephemerally) different from the animation values.
 
-const levels = new Dyn(START_LEVELS); /* number of clip levels */
-
 const modelDimensions = {
-  height: levels.map((x) => x * CLIP_HEIGHT + (x - 1) * (40 - CLIP_HEIGHT)),
-  width: new Dyn(START_WIDTH),
-  depth: new Dyn(START_DEPTH),
-  radius: new Dyn(START_RADIUS),
-  wall: new Dyn(START_WALL),
-  bottom: new Dyn(START_BOTTOM),
+  height: new Dyn(START_HEIGHT),
+  outerRadius: new Dyn(START_OUTER_RADIUS),
+  wallThickness: new Dyn(START_WALL_THICKNESS),
 };
 
-const innerWidth = Dyn.sequence([
-  modelDimensions.wall,
-  modelDimensions.width,
-] as const).map(([wall, width]) => width - 2 * wall);
 
-const innerDepth = Dyn.sequence([
-  modelDimensions.wall,
-  modelDimensions.depth,
-] as const).map(([wall, depth]) => depth - 2 * wall);
 
 // Current state of part positioning
 type PartPositionStatic = Extract<PartPosition, { tag: "static" }>;
@@ -105,13 +83,10 @@ const tmfLoader = new TMFLoader();
 // Reloads the model seen on page
 async function reloadModel(
   height: number,
-  width: number,
-  depth: number,
-  radius: number,
-  wall: number,
-  bottom: number,
+  outerRadius: number,
+  wallThickness: number,
 ) {
-  const model = await box(height, width, depth, radius, wall, bottom);
+  const model = await hollowCylinder(height, outerRadius, wallThickness);
   const geometry = mesh2geometry(model);
   geometry.computeVertexNormals(); // Make sure the geometry has normals
   mesh.geometry = geometry;
@@ -121,14 +96,11 @@ async function reloadModel(
 // when target dimensions are changed, update the model to download
 Dyn.sequence([
   modelDimensions.height,
-  modelDimensions.width,
-  modelDimensions.depth,
-  modelDimensions.radius,
-  modelDimensions.wall,
-  modelDimensions.bottom,
-] as const).addListener(([h, w, d, r, wa, bo]) => {
-  const filename = `skapa-${w}-${d}-${h}.3mf`;
-  tmfLoader.load(box(h, w, d, r, wa, bo), filename);
+  modelDimensions.outerRadius,
+  modelDimensions.wallThickness,
+] as const).addListener(([h, r, w]) => {
+  const filename = `cylinder-${(r * 2).toFixed(0)}x${h.toFixed(0)}-wall${w.toFixed(0)}.3mf`;
+  tmfLoader.load(hollowCylinder(h, r, w), filename);
 });
 
 /// RENDER
@@ -138,10 +110,11 @@ let centerCameraNeeded = true;
 
 // The mesh, updated in place when the geometry needs to change
 const mesh: THREE.Mesh = new THREE.Mesh(
-  new THREE.BoxGeometry(
-    modelDimensions.width.latest,
+  new THREE.CylinderGeometry(
+    modelDimensions.outerRadius.latest,
+    modelDimensions.outerRadius.latest,
     modelDimensions.height.latest,
-    modelDimensions.depth.latest,
+    32,
   ),
   new THREE.Material(),
 );
@@ -189,11 +162,8 @@ partPositioning.addListener((val) => {
 // The animated dimensions
 const animations = {
   height: new Animate(START_HEIGHT),
-  width: new Animate(START_WIDTH),
-  depth: new Animate(START_DEPTH),
-  radius: new Animate(START_RADIUS),
-  wall: new Animate(START_WALL),
-  bottom: new Animate(START_BOTTOM),
+  outerRadius: new Animate(START_OUTER_RADIUS),
+  wallThickness: new Animate(START_WALL_THICKNESS),
 };
 
 DIMENSIONS.forEach((dim) =>
@@ -209,107 +179,98 @@ const link = document.querySelector("a")!;
 
 const controls = document.querySelector(".controls") as HTMLDivElement;
 
-const levelsControl = stepper("levels", {
-  label: "Levels",
-  min: String(MIN_LEVELS),
-  max: String(MAX_LEVELS),
+const heightControl = rangeControl("height", {
+  name: "Height",
+  min: String(MIN_HEIGHT),
+  max: String(MAX_HEIGHT),
+  sliderMin: String(MIN_HEIGHT),
+  sliderMax: String(MAX_HEIGHT),
 });
-controls.append(levelsControl);
+controls.append(heightControl.wrapper);
 
-const widthControl = rangeControl("width", {
-  name: "Width",
-  min: String(MIN_WIDTH - 2 * START_WALL /* convert from outer to inner */),
-  max: String(MAX_WIDTH - 2 * START_WALL),
-  sliderMin: String(MIN_WIDTH - 2 * START_WALL),
-  sliderMax: "100",
+const outerRadiusControl = rangeControl("outerRadius", {
+  name: "Outer Radius",
+  min: String(MIN_OUTER_RADIUS),
+  max: String(MAX_OUTER_RADIUS),
+  sliderMin: String(MIN_OUTER_RADIUS),
+  sliderMax: String(MAX_OUTER_RADIUS),
 });
-controls.append(widthControl.wrapper);
+controls.append(outerRadiusControl.wrapper);
 
-const depthControl = rangeControl("depth", {
-  name: "Depth",
-  min: String(MIN_DEPTH - 2 * START_WALL /* convert from outer to inner */),
-  max: String(MAX_DEPTH - 2 * START_WALL),
-  sliderMin: String(MIN_DEPTH - 2 * START_WALL),
-  sliderMax: "100",
+const wallThicknessControl = rangeControl("wallThickness", {
+  name: "Wall Thickness",
+  min: String(MIN_WALL_THICKNESS),
+  max: String(MAX_WALL_THICKNESS),
+  sliderMin: String(MIN_WALL_THICKNESS),
+  sliderMax: String(MAX_WALL_THICKNESS),
 });
-controls.append(depthControl.wrapper);
+controls.append(wallThicknessControl.wrapper);
 
 // The dimension inputs
 const inputs = {
-  levels: document.querySelector("#levels")! as HTMLInputElement,
-  levelsPlus: document.querySelector("#levels-plus")! as HTMLButtonElement,
-  levelsMinus: document.querySelector("#levels-minus")! as HTMLButtonElement,
-  width: widthControl.input,
-  widthRange: widthControl.range,
-  depth: depthControl.input,
-  depthRange: depthControl.range,
+  height: heightControl.input,
+  heightRange: heightControl.range,
+  outerRadius: outerRadiusControl.input,
+  outerRadiusRange: outerRadiusControl.range,
+  wallThickness: wallThicknessControl.input,
+  wallThicknessRange: wallThicknessControl.range,
 } as const;
 
 // Add change events to all dimension inputs
 
-// height/levels
-([[inputs.levels, "change"]] as const).forEach(([input, evnt]) => {
-  levels.addListener((levels) => {
-    input.value = `${levels}`;
-  });
-  input.addEventListener(evnt, () => {
-    const n = parseInt(input.value);
-    if (!Number.isNaN(n))
-      /* Clamp between min & max (currently synced manually with HTML) */
-      levels.send(Math.max(MIN_LEVELS, Math.min(n, MAX_LEVELS)));
-  });
-});
-
-inputs.levelsPlus.addEventListener("click", () => {
-  const n = levels.latest + 1;
-  levels.send(Math.max(MIN_LEVELS, Math.min(n, MAX_LEVELS)));
-});
-levels.addListener((n) => {
-  inputs.levelsPlus.disabled = MAX_LEVELS <= n;
-  inputs.levelsMinus.disabled = n <= MIN_LEVELS;
-});
-
-inputs.levelsMinus.addEventListener("click", () => {
-  const n = levels.latest - 1;
-  levels.send(Math.max(1, Math.min(n, 5)));
-});
-
-// width
+// height
 (
   [
-    [inputs.width, "change"],
-    [inputs.widthRange, "input"],
+    [inputs.height, "change"],
+    [inputs.heightRange, "input"],
   ] as const
 ).forEach(([input, evnt]) => {
-  innerWidth.addListener((width) => {
-    input.value = `${width}`;
+  modelDimensions.height.addListener((height) => {
+    input.value = `${height}`;
   });
   input.addEventListener(evnt, () => {
-    const outer = parseInt(input.value) + 2 * modelDimensions.wall.latest;
-    if (!Number.isNaN(outer))
-      modelDimensions.width.send(Math.max(outer, MIN_WIDTH));
+    const value = parseInt(input.value);
+    if (!Number.isNaN(value))
+      modelDimensions.height.send(Math.max(MIN_HEIGHT, Math.min(value, MAX_HEIGHT)));
   });
 });
 
-// depth
+// outer radius
 (
   [
-    [inputs.depth, "change"],
-    [inputs.depthRange, "input"],
+    [inputs.outerRadius, "change"],
+    [inputs.outerRadiusRange, "input"],
   ] as const
 ).forEach(([input, evnt]) => {
-  innerDepth.addListener((depth) => {
-    input.value = `${depth}`;
+  modelDimensions.outerRadius.addListener((radius) => {
+    input.value = `${radius}`;
   });
   input.addEventListener(evnt, () => {
-    const outer = parseInt(input.value) + 2 * modelDimensions.wall.latest;
-    if (!Number.isNaN(outer))
-      modelDimensions.depth.send(Math.max(outer, MIN_DEPTH));
+    const value = parseInt(input.value);
+    if (!Number.isNaN(value))
+      modelDimensions.outerRadius.send(Math.max(MIN_OUTER_RADIUS, Math.min(value, MAX_OUTER_RADIUS)));
+  });
+});
+
+// wall thickness
+(
+  [
+    [inputs.wallThickness, "change"],
+    [inputs.wallThicknessRange, "input"],
+  ] as const
+).forEach(([input, evnt]) => {
+  modelDimensions.wallThickness.addListener((thickness) => {
+    input.value = `${thickness}`;
+  });
+  input.addEventListener(evnt, () => {
+    const value = parseInt(input.value);
+    if (!Number.isNaN(value))
+      modelDimensions.wallThickness.send(Math.max(MIN_WALL_THICKNESS, Math.min(value, MAX_WALL_THICKNESS)));
   });
 });
 
 // Add select-all on input click
-(["levels", "width", "depth"] as const).forEach((dim) => {
+(["height", "outerRadius", "wallThickness"] as const).forEach((dim) => {
   const input = inputs[dim];
   input.addEventListener("focus", () => {
     input.select();
@@ -506,11 +467,8 @@ function loop(nowMillis: DOMHighResTimeStamp) {
     reloadModelNeeded = false;
     reloadModel(
       animations["height"].current,
-      animations["width"].current,
-      animations["depth"].current,
-      animations["radius"].current,
-      animations["wall"].current,
-      animations["bottom"].current,
+      animations["outerRadius"].current,
+      animations["wallThickness"].current,
     ).then(() => {
       modelLoadStarted = undefined;
       centerCameraNeeded = true;
